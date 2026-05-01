@@ -1,6 +1,24 @@
 import requests
 from bs4 import BeautifulSoup
 import os
+import pymongo
+from datetime import datetime
+from dotenv import load_dotenv
+
+# --- טעינת הגדרות אבטחה ---
+load_dotenv()  # טוען את המשתנים מקובץ .env
+MONGO_URI = os.getenv("MONGO_URI")
+
+# --- חיבור ל-MongoDB ---
+try:
+    client = pymongo.MongoClient(MONGO_URI)
+    db = client['BeachMatchDB']
+    collection = db['forecasts']
+    # בדיקת חיבור
+    client.admin.command('ping')
+    print("V - התחברת בהצלחה ל-MongoDB (מאובטח)!")
+except Exception as e:
+    print(f"X - שגיאה בחיבור ל-MongoDB: {e}")
 
 SEA_URLS = {
     "HOF_TZAFONI": "https://ims.gov.il/sites/default/files/ims_data/rss/forecast_sea/rssForecastSea_212_he.xml",
@@ -9,8 +27,6 @@ SEA_URLS = {
     "KINNERET": "https://ims.gov.il/sites/default/files/ims_data/rss/forecast_sea/rssForecastSea_211_he.xml",
     "EILAT": "https://ims.gov.il/sites/default/files/ims_data/rss/forecast_sea/rssForecastSea_214_he.xml",
 }
-
-VARIABLES = ["wind_speed", "wind_direction", "wave_height", "water_temp"]
 
 
 def parse_description(html_desc):
@@ -21,7 +37,7 @@ def parse_description(html_desc):
 
     for elem in soup.stripped_strings:
         text = elem.strip()
-        if text.startswith("מ-") and "עד" in text:  # התחלה של טווח זמן
+        if text.startswith("מ-") and "עד" in text:
             if current:
                 blocks.append(current)
             current = {"time_range": text, "data": []}
@@ -36,7 +52,6 @@ def parse_description(html_desc):
 def extract_variables(block):
     """ מחלץ את הערכים של המשתנים מתוך בלוק """
     result = {}
-
     for line in block["data"]:
         if "מהירות הרוח" in line:
             numbers = [int(s) for s in line.replace("קמ\"ש", "").split() if s.isdigit()]
@@ -49,104 +64,58 @@ def extract_variables(block):
         elif "טמפרטורת פני הים" in line:
             numbers = [int(s) for s in line.split(":")[-1].split() if s[0].isdigit()]
             result["water_temp"] = numbers[0] if numbers else None
-
     return result
 
 
-def save_data(station, variables_dict):
-    """ שומר כל משתנה בספרייה נפרדת """
-    BASE_DIR = "data"
-    if not os.path.exists(BASE_DIR):
-        os.mkdir(BASE_DIR)
-
-    for var in variables_dict:
-        var_dir = os.path.join(BASE_DIR, var)
-        if not os.path.exists(var_dir):
-            os.mkdir(var_dir)
-
-        file_path = os.path.join(var_dir, f"{station}.txt")
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(str(variables_dict[var]))
+def save_to_mongo(station, time_range, variables, title, pub_date):
+    """ שומר את המידע ל-MongoDB """
+    try:
+        document = {
+            "station": station,
+            "title": title,
+            "pub_date": pub_date,
+            "forecast_time_range": time_range,
+            "data": variables,
+            "scraped_at": datetime.now()
+        }
+        collection.insert_one(document)
+        return True
+    except Exception as e:
+        print(f"שגיאה בשמירה ל-DB: {e}")
+        return False
 
 
 def scrape_sea_forecast():
-    print("\n=== מתחיל משיכת תחזיות חופים ===\n")
+    print("\n=== מתחיל משיכת תחזיות ושמירה לענן ===\n")
     for station, url in SEA_URLS.items():
         try:
             response = requests.get(url, timeout=10)
             response.encoding = "utf-8"
+            soup = BeautifulSoup(response.text, "xml")
+            item = soup.find("item")
+            if not item: continue
+
+            title = item.find("title").text
+            pub_date = item.find("pubDate").text
+            description_html = item.find("description").text
+
+            print(f"מעבד נתונים עבור: {station}...")
+            blocks = parse_description(description_html)
+
+            for block in blocks:
+                variables_dict = extract_variables(block)
+                success = save_to_mongo(station, block["time_range"], variables_dict, title, pub_date)
+                if success:
+                    print(f"  [V] נשמר טווח זמן: {block['time_range']}")
+
         except Exception as e:
-            print(f"Error fetching {station}: {e}")
-            continue
-
-        soup = BeautifulSoup(response.text, "xml")
-        item = soup.find("item")
-        if not item:
-            continue
-
-        title = item.find("title").text
-        pub_date = item.find("pubDate").text
-        description_html = item.find("description").text
-
-        print("=" * 50)
-        print(f"חוף: {station}")
-        print(f"כותרת: {title}")
-        print(f"זמן פרסום: {pub_date}\n")
-
-        blocks = parse_description(description_html)
-
-        for block in blocks:
-            print(block["time_range"])
-            variables_dict = extract_variables(block)
-            for var_name, value in variables_dict.items():
-                print(f"- {var_name}: {value}")
-            save_data(station, variables_dict)
-            print()
-
-        print("=" * 50, "\n")
-
-
-def read_variable(variable_name):
-    """ קורא את כל הקבצים בספרייה של משתנה מסוים """
-    var_dir = os.path.join("data", variable_name)
-    if not os.path.exists(var_dir):
-        print(f"No directory for variable '{variable_name}'")
-        return
-
-    print(f"\n--- Values for variable '{variable_name}' ---")
-    for filename in os.listdir(var_dir):
-        file_path = os.path.join(var_dir, filename)
-        with open(file_path, "r", encoding="utf-8") as f:
-            value = f.read().strip()
-        print(f"{filename.replace('.txt', '')} -> {value}")
-
-
-def read_station(station_name):
-    """ קורא את כל המשתנים עבור חוף מסוים """
-    print(f"\n=== Data for station '{station_name}' ===")
-    base_dir = "data"
-    if not os.path.exists(base_dir):
-        print("No data available. Run scrape_sea_forecast() first.")
-        return
-
-    for var in VARIABLES:
-        var_dir = os.path.join(base_dir, var)
-        file_path = os.path.join(var_dir, f"{station_name}.txt")
-        if os.path.exists(file_path):
-            with open(file_path, "r", encoding="utf-8") as f:
-                value = f.read().strip()
-            print(f"{var}: {value}")
-        else:
-            print(f"{var}: No data")
+            print(f"שגיאה בעיבוד {station}: {e}")
 
 
 if __name__ == "__main__":
-    scrape_sea_forecast()  # מושך ושומר את כל החופים
+    # הרצת הסריקה
+    scrape_sea_forecast()
 
-    # דוגמה: קריאה לפי משתנה
-    read_variable("wind_speed")
-    read_variable("wave_height")
-
-    # דוגמה: קריאה לפי חוף
-    read_station("HOF_TZAFONI")
-    read_station("EILAT")
+    # עדכון קובץ ה-requirements אוטומטית בסיום
+    os.system("pip freeze > requirements.txt")
+    print("\nהתהליך הסתיים בהצלחה! קובץ ה-requirements עודכן.")
