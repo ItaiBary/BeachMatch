@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>BeachMatch PoC</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f7f9; margin: 0; padding: 20px; text-align: center; }
+        .header { margin-bottom: 40px; }
+        h1 { color: #0077be; margin-bottom: 10px; }
+
+        .refresh-btn {
+            display: inline-block;
+            background-color: #ff9f43;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 30px;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(255,159,67,0.3);
+            transition: 0.3s;
+            margin-bottom: 30px;
+        }
+        .refresh-btn:hover { background-color: #ee5253; transform: scale(1.05); }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; max-width: 1200px; margin: 0 auto; }
+        .card { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-top: 6px solid #0077be; text-align: right; }
+        .card h2 { margin-top: 0; font-size: 1.3em; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .wave-box { background: #e1f5fe; padding: 15px; border-radius: 10px; text-align: center; margin: 15px 0; }
+        .wave-val { font-size: 26px; font-weight: bold; color: #0277bd; }
+        .details { font-size: 15px; color: #555; line-height: 1.8; }
+        .footer-note { font-size: 11px; color: #999; margin-top: 15px; border-top: 1px solid #f9f9f9; padding-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>BeachMatch 🏄‍♂️</h1>
+        <p>תצוגת PoC - נתוני השירות המטאורולוגי</p>
+        <a href="/refresh" class="refresh-btn" onclick="this.innerHTML='🔄 מעדכן נתונים...'">רענן נתונים עכשיו</a>
+    </div>
+
+    <div class="grid">
+        {% for f in forecasts %}
+        <div class="card">
+            <h2>{{ f.station.replace('_', ' ') }}</h2>
+            <div class="wave-box">
+                <div class="wave-val">
+                    {% if f.data.wave_height %}
+                        {{ f.data.wave_height[0] }}-{{ f.data.wave_height[1] }} ס"מ
+                    {% else %}
+                        אין נתון
+                    {% endif %}
+                </div>
+                <div style="font-size: 12px; color: #0277bd;">גובה גלים</div>
+            </div>
+            <div class="details">
+                <strong>🕒 טווח זמן:</strong> {{ f.forecast_time_range }}<br>
+                <strong>🌡️ טמפ' מים:</strong> {{ f.data.water_temp }}°C<br>
+                <strong>🌬️ רוח:</strong> {{ f.data.wind_direction }}<br>
+                <strong>💨 מהירות:</strong> {{ f.data.wind_speed[0] if f.data.wind_speed else '?' }}-{{ f.data.wind_speed[1] if f.data.wind_speed else '?' }} קמ"ש
+            </div>
+            <div class="footer-note">
+                סריקה אחרונה: {{ f.scraped_at.strftime('%H:%M:%S | %d/%m/%Y') }}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
